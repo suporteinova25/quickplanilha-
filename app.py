@@ -1,9 +1,10 @@
-import os, io, secrets
+import os, io
 from flask import Flask, render_template_string, request, redirect, session, send_file
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
 from openpyxl.formatting.rule import FormulaRule
 import pg8000
+import secrets
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(8)
@@ -30,7 +31,7 @@ def col_c(model_n):
         return "TABLET"
     return ""
 
-@app.route("/", methods=["GET","POST"])
+@app.route("/", methods=["GET", "POST"])
 def login():
     form_html = """
     <h2>Login</h2>
@@ -43,7 +44,7 @@ def login():
     """
     if request.method == "POST":
         user = request.form["user"]
-        pwd  = request.form["pwd"]
+        pwd = request.form["pwd"]
         try:
             conn = pg8000.connect(
                 host=DB_HOST, port=DB_PORT,
@@ -51,77 +52,74 @@ def login():
             )
             conn.close()
             session["user"] = user
-            session["pwd"]  = pwd
+            session["pwd"] = pwd
             return redirect("/busca")
         except Exception as e:
             return render_template_string(form_html, msg=str(e))
     return render_template_string(form_html)
 
-@app.route("/busca", methods=["GET","POST"])
+@app.route("/busca", methods=["GET", "POST"])
 def busca():
     if "user" not in session:
         return redirect("/")
-
     if request.method == "POST":
         sufixo = request.form["sufixo"]
-        try:
-            conn = pg8000.connect(
-                host=DB_HOST, port=DB_PORT,
-                database=DB_NAME,
-                user=session["user"], password=session["pwd"]
-            )
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT "number",
-                       ("info"->>'model')::text,
-                       ("info"->>'imei')::text,
-                       ("info"->>'iccid')::text,
-                       ("info"->>'phone')::text,
-                       ("info"->>'serial')::text
-                FROM devices
-                WHERE "number" ILIKE %s
-                ORDER BY "number"
-            """, (f"%{sufixo}%",))
-            rows = cur.fetchall()
-            cur.close()
-            conn.close()
+        conn = pg8000.connect(
+            host=DB_HOST, port=DB_PORT,
+            database=DB_NAME,
+            user=session["user"], password=session["pwd"]
+        )
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT "number",
+                   (info::json->>'model') AS model,
+                   (info::json->>'imei') AS imei,
+                   (info::json->>'iccid') AS iccid,
+                   (info::json->>'phone') AS phone,
+                   (info::json->>'serial') AS serial
+            FROM devices
+            WHERE "number" ILIKE %s
+            ORDER BY "number"
+        """, (f"%{sufixo}%",))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
 
-            # ⚠️ Certifique-se de que modelo.xlsx está no mesmo diretório do app.py
-            wb = load_workbook("modelo.xlsx")
-            ws = wb.active
+        wb = load_workbook("modelo.xlsx")
+        ws = wb.active
 
-            for r in range(2, ws.max_row + 1):
-                for c in ("B", "C", "D", "G", "H", "I", "J"):
-                    ws[f"{c}{r}"].value = None
+        # limpa dados anteriores
+        for r in range(2, ws.max_row + 1):
+            for c in ("B", "C", "D", "G", "H", "I", "J"):
+                ws[f"{c}{r}"].value = None
 
-            for ridx, row in enumerate(rows, 2):
-                model = normalize(row[1])
-                ws[f"B{ridx}"] = model
-                ws[f"C{ridx}"] = col_c(model)
-                ws[f"D{ridx}"] = row[0]
-                ws[f"G{ridx}"] = row[2] or ""
-                ws[f"H{ridx}"] = row[3] or ""
-                ws[f"I{ridx}"] = row[4] or ""
-                ws[f"J{ridx}"] = row[5] or ""
+        # preenche com novos dados
+        for ridx, row in enumerate(rows, 2):
+            model = normalize(row[1])
+            ws[f"B{ridx}"] = model
+            ws[f"C{ridx}"] = col_c(model)
+            ws[f"D{ridx}"] = row[0]
+            ws[f"G{ridx}"] = row[2] or ""
+            ws[f"H{ridx}"] = row[3] or ""
+            ws[f"I{ridx}"] = row[4] or ""
+            ws[f"J{ridx}"] = row[5] or ""
 
-            red = PatternFill(start_color="FF0000", fill_type="solid")
-            lr = len(rows) + 1 if rows else 1
-            rule = FormulaRule(formula=[f'AND(G2<>"",COUNTIF($G$2:$G${lr},G2)>1)'], fill=red)
-            ws.conditional_formatting.add(f"G2:G{lr}", rule)
+        # destaque duplicados na coluna G
+        red = PatternFill(start_color="FF0000", fill_type="solid")
+        lr = len(rows) + 1 if rows else 1
+        rule = FormulaRule(formula=[f'AND(G2<>"",COUNTIF($G$2:$G${lr},G2)>1)'], fill=red)
+        ws.conditional_formatting.add(f"G2:G{lr}", rule)
 
-            buf = io.BytesIO()
-            wb.save(buf)
-            buf.seek(0)
-            return send_file(
-                buf,
-                as_attachment=True,
-                download_name=f"planilha_{sufixo}.xlsx",
-                mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
 
-        except Exception as e:
-            # 🔍 Mostra o erro exato no navegador e logs do Render
-            return f"<pre>ERRO: {e}</pre>"
+        return send_file(
+            buf,
+            as_attachment=True,
+            download_name=f"planilha_{sufixo}.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
     return """
     <h2>Buscar dispositivos</h2>
@@ -140,4 +138,3 @@ def logout():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
