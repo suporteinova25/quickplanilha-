@@ -10,9 +10,9 @@ app = Flask(__name__)
 app.secret_key = secrets.token_hex(8)
 
 # ---------- CONFIGURAÇÕES FIXAS ----------
-DB_HOST = "db.xxxxxxxxx.supabase.co"   # ALTERE AQUI
+DB_HOST = "mdm.inovaptt.com.br"   # ALTERE AQUI
 DB_PORT = 5432                         # ALTERE AQUI se for outra
-DB_NAME = "postgres"                 # ALTERE AQUI se for outra
+DB_NAME = "hmdm"                 # ALTERE AQUI se for outra
 # ---------------------------------------
 
 def normalize(m):
@@ -112,4 +112,5 @@ def busca():
 @app.route("/logout")
 def logout():
     session.clear()
+
     return redirect("/")
