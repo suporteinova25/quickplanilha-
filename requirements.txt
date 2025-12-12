@@ -1,3 +1,4 @@
-flask
-openpyxl
-pg8000
+Flask==3.0.*
+openpyxl==3.1.*
+pg8000==1.31.*
+gunicorn==23.0.*

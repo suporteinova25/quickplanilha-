@@ -7,13 +7,11 @@ import pg8000
 import secrets
 
 app = Flask(__name__)
-app.secret_key = secrets.token_hex(8)
+app.secret_key = secrets.token_hex(16)
 
-# ---------- CONFIGURAÇÕES FIXAS ----------
-DB_HOST = "mdm.inovaptt.com.br"   # ALTERE AQUI
-DB_PORT = 5432                    # ALTERE AQUI se for outra
-DB_NAME = "hmdm"                  # ALTERE AQUI se for outra
-# ---------------------------------------
+DB_HOST = "mdm.inovaptt.com.br"
+DB_PORT = 5432
+DB_NAME = "hmdm"
 
 def normalize(m):
     m = (m or "").strip().upper()
@@ -34,25 +32,21 @@ def col_c(model_n):
 @app.route("/", methods=["GET", "POST"])
 def login():
     form_html = """
-    <h2>Login</h2>
+    <h2>Login HMDM</h2>
     <form method="post">
-        Usuário:<br><input name="user" required><br>
+        Usuário:<br><input name="user" required><br><br>
         Senha:<br><input type="password" name="pwd" required><br><br>
         <button>Entrar</button>
     </form>
     {% if msg %}<br><small style="color:red">{{msg}}</small>{% endif %}
     """
     if request.method == "POST":
-        user = request.form["user"]
-        pwd = request.form["pwd"]
         try:
-            conn = pg8000.connect(
-                host=DB_HOST, port=DB_PORT,
-                database=DB_NAME, user=user, password=pwd
-            )
+            conn = pg8000.connect(host=DB_HOST, port=DB_PORT, database=DB_NAME,
+                                  user=request.form["user"], password=request.form["pwd"])
             conn.close()
-            session["user"] = user
-            session["pwd"] = pwd
+            session["user"] = request.form["user"]
+            session["pwd"] = request.form["pwd"]
             return redirect("/busca")
         except Exception as e:
             return render_template_string(form_html, msg=str(e))
@@ -62,25 +56,53 @@ def login():
 def busca():
     if "user" not in session:
         return redirect("/")
+
     if request.method == "POST":
-        sufixo = request.form["sufixo"]
-        conn = pg8000.connect(
-            host=DB_HOST, port=DB_PORT,
-            database=DB_NAME,
-            user=session["user"], password=session["pwd"]
-        )
+        sufixo = request.form["sufixo"].strip()
+
+        conn = pg8000.connect(host=DB_HOST, port=DB_PORT, database=DB_NAME,
+                              user=session["user"], password=session["pwd"])
         cur = conn.cursor()
+
         cur.execute("""
-            SELECT "number",
-                   (info::json->>'model') AS model,
-                   (info::json->>'imei') AS imei,
-                   (info::json->>'iccid') AS iccid,
-                   (info::json->>'phone') AS phone,
-                   (info::json->>'serial') AS serial
+            SELECT 
+                "number" AS linha_principal,
+
+                -- CHIP 1
+                NULLIF(TRIM(info::json->>'imei'), '') AS imei1,
+                NULLIF(TRIM(info::json->>'iccid'), '') AS iccid1,
+                NULLIF(TRIM(info::json->>'phone'), '') AS linha1,
+
+                -- CHIP 2 (vários nomes possíveis nomes no HMDM)
+                COALESCE(
+                    NULLIF(TRIM(info::json->>'imei2'), ''),
+                    NULLIF(TRIM(info::json->>'imeiSlot2'), ''),
+                    NULLIF(TRIM(info::json->>'imei_2'), '')
+                ) AS imei2,
+
+                COALESCE(
+                    NULLIF(TRIM(info::json->>'iccid2'), ''),
+                    NULLIF(TRIM(info::json->>'iccidSlot2'), ''),
+                    NULLIF(TRIM(info::json->>'iccid_2'), '')
+                ) AS iccid2,
+
+                COALESCE(
+                    NULLIF(TRIM(info::json->>'phone2'), ''),
+                    NULLIF(TRIM(info::json->>'line2'), ''),
+                    NULLIF(TRIM(info::json->>'number2'), ''),
+                    NULLIF(TRIM(info::json->>'phone_2'), '')
+                ) AS linha2,
+
+                (info::json->>'model') AS model,
+                (info::json->>'serial') AS serial
+
             FROM devices
             WHERE "number" ILIKE %s
+               OR info::json->>'phone2' ILIKE %s
+               OR info::json->>'line2' ILIKE %s
             ORDER BY "number"
-        """, (f"%{sufixo}%",))
+        """, (f"%{sufixo}%", f"%{sufixo}%", f"%{sufixo}%"))
+
         rows = cur.fetchall()
         cur.close()
         conn.close()
@@ -88,46 +110,56 @@ def busca():
         wb = load_workbook("modelo.xlsx")
         ws = wb.active
 
-        # limpa dados anteriores
-        for r in range(2, ws.max_row + 1):
-            for c in ("B", "C", "D", "G", "H", "I", "J"):
+        # Limpa as colunas G até L
+        for r in range(2, ws.max_row + 10):
+            for c in "GHIJKL":
                 ws[f"{c}{r}"].value = None
 
-        # preenche com novos dados
-        for ridx, row in enumerate(rows, 2):
-            model = normalize(row[1])
-            ws[f"B{ridx}"] = model
-            ws[f"C{ridx}"] = col_c(model)
-            ws[f"D{ridx}"] = row[0]
-            ws[f"G{ridx}"] = row[2] or ""
-            ws[f"H{ridx}"] = row[3] or ""
-            ws[f"I{ridx}"] = row[4] or ""
-            ws[f"J{ridx}"] = row[5] or ""
+        # Preenche exatamente como você pediu
+        for idx, row in enumerate(rows, start=2):
+            # Dados do CHIP 1
+            ws[f"G{idx}"] = row[1] or ""   # IMEI 01
+            ws[f"H{idx}"] = row[2] or ""   # ICCID 01
+            ws[f"I{idx}"] = row[3] or row[0] or ""   # Linha 01 (usa phone se existir, senão o number)
 
-        # destaque duplicados na coluna G
+            # Dados do CHIP 2
+            ws[f"J{idx}"] = row[4] or ""   # IMEI 02
+            ws[f"K{idx}"] = row[5] or ""   # ICCID 02
+            ws[f"L{idx}"] = row[6] or ""   # Linha 02
+
+            # Mantém o resto da planilha (B, C, D, etc.) como estava
+            model = normalize(row[7])
+            ws[f"B{idx}"] = model
+            ws[f"C{idx}"] = col_c(model)
+            ws[f"D{idx}"] = row[0]  # número principal do device
+
+            # Serial (se quiser colocar em alguma coluna)
+            # ws[f"??{idx}"] = row[8] or ""
+
+        # Destaque vermelho em IMEIs duplicados
         red = PatternFill(start_color="FF0000", fill_type="solid")
-        lr = len(rows) + 1 if rows else 1
-        rule = FormulaRule(formula=[f'AND(G2<>"",COUNTIF($G$2:$G${lr},G2)>1)'], fill=red)
-        ws.conditional_formatting.add(f"G2:G{lr}", rule)
+        last = len(rows) + 1
+
+        ws.conditional_formatting.add(f"G2:G{last}",
+            FormulaRule(formula=[f'AND(G2<>"",COUNTIF($G$2:$G${last},G2)>1)'], fill=red))
+        ws.conditional_formatting.add(f"J2:J{last}",
+            FormulaRule(formula=[f'AND(J2<>"",COUNTIF($J$2:$J${last},J2)>1)'], fill=red))
 
         buf = io.BytesIO()
         wb.save(buf)
         buf.seek(0)
 
-        return send_file(
-            buf,
-            as_attachment=True,
-            download_name=f"planilha_{sufixo}.xlsx",
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        return send_file(buf, as_attachment=True,
+                         download_name=f"dualchip_{sufixo}.xlsx",
+                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     return """
-    <h2>Buscar dispositivos</h2>
+    <h2>Busca Dual Chip</h2>
     <form method="post">
-        Sufixo/linha: <input name="sufixo" required>
-        <input type="submit" value="Gerar Excel">
-    </form>
-    <br><a href="/logout">Sair</a>
+        Sufixo da linha: <input name="sufixo" size="30" required placeholder="ex: 9999">
+        <button>Gerar Planilha</button>
+    </form><br>
+    <a href="/logout">Sair</a>
     """
 
 @app.route("/logout")
