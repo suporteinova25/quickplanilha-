@@ -141,9 +141,9 @@ def busca():
                     else:
                         ws[f"H{idx}"].font = azul
 
-                # <<< AQUI ESTÃO AS CORREÇÕES QUE VOCÊ PEDIU >>>
-                ws[f"I{idx}"] = linha1 if linha1 else ""   # Só coloca se tiver linha real
-                ws[f"J{idx}"] = imei2 if imei2 else ""     # Só coloca se tiver segundo IMEI
+                # Correções anteriores mantidas
+                ws[f"I{idx}"] = linha1 if linha1 else ""   # Só se tiver linha real
+                ws[f"J{idx}"] = imei2 if imei2 else ""     # Só se tiver segundo IMEI
 
                 ws[f"K{idx}"] = iccid2 or ""
                 if iccid2:
@@ -159,11 +159,15 @@ def busca():
                 ws[f"M{idx}"] = serial or ""
 
             ultima_linha = len(rows) + 1
+
+            # IMEI1 (G): destaca duplicados (ignora vazios com AND)
             ws.conditional_formatting.add(f"G2:G{ultima_linha}",
-                FormulaRule(formula=[f'AND(G2<>"",COUNTIF($G$2:$G${ultima_linha},G2)>1)'],
+                FormulaRule(formula=[f'AND(G2<>"", COUNTIF($G$2:$G${ultima_linha},G2)>1)'],
                             fill=vermelho_fundo))
+
+            # IMEI2 (J): destaca apenas duplicados reais (não pinta células vazias)
             ws.conditional_formatting.add(f"J2:J{ultima_linha}",
-                FormulaRule(formula=[f'AND(J2<>"",COUNTIF($J$2:$J${ultima_linha},J2)>1)'],
+                FormulaRule(formula=[f'COUNTIF($J$2:$J${ultima_linha},J2)>1'],
                             fill=vermelho_fundo))
 
             buf = io.BytesIO()
