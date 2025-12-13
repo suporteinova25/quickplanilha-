@@ -69,8 +69,6 @@ def busca():
 
     if request.method == "POST":
         sufixo = request.form["sufixo"].strip()
-
-        # Aceita qualquer tamanho ≥ 1 caractere
         if not sufixo:
             return "Por favor, informe pelo menos um caractere para busca."
 
@@ -113,11 +111,11 @@ def busca():
             wb = load_workbook("modelo.xlsx")
             ws = wb.active
 
-            # Limpa apenas colunas B a M (2 a 13) a partir da linha 2
+            # Limpa colunas B até M a partir da linha 2
             for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=2, max_col=13):
                 for cell in row:
                     cell.value = None
-                    cell.font = Font()  # reseta formatação
+                    cell.font = Font()
 
             roxo = Font(color="9C27B0")
             vermelho = Font(color="F44336")
@@ -126,15 +124,14 @@ def busca():
 
             for idx, row in enumerate(rows, start=2):
                 number, imei1, iccid1, linha1, imei2, iccid2, linha2, model_raw, serial = row
-
                 model = normalize(model_raw)
 
                 ws[f"B{idx}"] = model
                 ws[f"C{idx}"] = col_c(model)
                 ws[f"D{idx}"] = number or ""
-                # E e F ficam em branco (já limpos)
                 ws[f"G{idx}"] = imei1 or ""
                 ws[f"H{idx}"] = iccid1 or ""
+
                 if iccid1:
                     iccid_str = str(iccid1)
                     if iccid_str.startswith("895510"):
@@ -143,8 +140,11 @@ def busca():
                         ws[f"H{idx}"].font = vermelho
                     else:
                         ws[f"H{idx}"].font = azul
-                ws[f"I{idx}"] = linha1 or number or ""
-                ws[f"J{idx}"] = imei2 or ""
+
+                # <<< AQUI ESTÃO AS CORREÇÕES QUE VOCÊ PEDIU >>>
+                ws[f"I{idx}"] = linha1 if linha1 else ""   # Só coloca se tiver linha real
+                ws[f"J{idx}"] = imei2 if imei2 else ""     # Só coloca se tiver segundo IMEI
+
                 ws[f"K{idx}"] = iccid2 or ""
                 if iccid2:
                     iccid_str = str(iccid2)
@@ -154,11 +154,11 @@ def busca():
                         ws[f"K{idx}"].font = vermelho
                     else:
                         ws[f"K{idx}"].font = azul
+
                 ws[f"L{idx}"] = linha2 or ""
                 ws[f"M{idx}"] = serial or ""
 
             ultima_linha = len(rows) + 1
-
             ws.conditional_formatting.add(f"G2:G{ultima_linha}",
                 FormulaRule(formula=[f'AND(G2<>"",COUNTIF($G$2:$G${ultima_linha},G2)>1)'],
                             fill=vermelho_fundo))
@@ -169,8 +169,8 @@ def busca():
             buf = io.BytesIO()
             wb.save(buf)
             buf.seek(0)
-
             safe_sufixo = re.sub(r'[^\w\-]', '_', sufixo)
+
             return send_file(
                 buf,
                 as_attachment=True,
